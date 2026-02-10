@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 base64 = "0.22.1"
 crossterm = "0.28.1"
+csv = "1.4.0"
 image = "0.25.9"
 ratatui = "0.29.0"
 ratatui-image = { version = "9.0.0", default-features = false, features = ["crossterm", "image-defaults"] }
