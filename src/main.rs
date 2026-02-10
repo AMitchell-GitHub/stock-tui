@@ -1,7 +1,8 @@
 use std::{
+    collections::HashSet,
     env,
     error::Error,
-    fs::File,
+    fs::{self, File},
     io::{self, Cursor},
     process::Command,
     time::{Duration, Instant},
@@ -50,10 +51,12 @@ struct TickerRecord {
     kind: String,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 enum InputMode {
     Normal,
     Editing,
+    SettingsMain,
+    SettingsIndicators,
 }
 
 struct App {
@@ -71,6 +74,17 @@ struct App {
     current_image_area_size: (u16, u16),
     last_size_change_time: Instant,
     last_fetch_time: Instant,
+    // Settings
+    available_indicators: Vec<IndicatorMeta>,
+    enabled_indicators: HashSet<String>,
+    // Settings State
+    settings_main_state: ListState,
+    settings_ind_state: ListState,
+    settings_items: Vec<&'static str>,
+    // Configuration
+    show_header: bool,
+    use_24h_time: bool,
+    price_view: bool, // true = Price, false = % Change
 }
 
 impl App {
@@ -90,6 +104,20 @@ impl App {
             current_image_area_size: (0, 0),
             last_size_change_time: Instant::now(),
             last_fetch_time: Instant::now(), // force initial fetch
+            available_indicators: get_available_indicators(),
+            enabled_indicators: HashSet::new(),
+            settings_main_state: ListState::default(),
+            settings_ind_state: ListState::default(),
+            settings_items: vec![
+                "Indicators >",
+                "View: % Change", 
+                "Time: 24h",     
+                "Header: Show",  
+                "Save & Exit",
+            ],
+            show_header: true,
+            use_24h_time: true,
+            price_view: false,
         }
     }
 
@@ -111,12 +139,35 @@ impl App {
     }
 }
 
-fn fetch_stock_data(symbol: &str, width: u16, height: u16) -> Result<StockStats, Box<dyn Error>> {
+fn fetch_stock_data(
+    symbol: &str, 
+    width: u16, 
+    height: u16, 
+    indicators: &HashSet<String>, 
+    use_24h: bool, 
+    price_view: bool
+) -> Result<StockStats, Box<dyn Error>> {
+    let indicators_str = if indicators.is_empty() {
+        "None".to_string()
+    } else {
+        indicators
+            .iter()
+            .cloned()
+            .collect::<Vec<String>>()
+            .join(",")
+    };
+    
+    let time_fmt = if use_24h { "24h" } else { "12h" };
+    let chart_mode = if price_view { "price" } else { "percent" };
+
     let output = Command::new("python3")
         .arg("fetch_stock.py")
         .arg(symbol)
         .arg(width.to_string())
         .arg(height.to_string())
+        .arg(indicators_str)
+        .arg(time_fmt)
+        .arg(chart_mode)
         .output()?;
 
     if !output.status.success() {
@@ -149,6 +200,37 @@ fn load_tickers() -> Result<Vec<TickerRecord>, Box<dyn Error>> {
     Ok(tickers)
 }
 
+#[derive(Clone, Debug)]
+struct IndicatorMeta {
+    name: String,
+    requires_price: bool,
+}
+
+fn get_available_indicators() -> Vec<IndicatorMeta> {
+    let mut indicators = Vec::new();
+    if let Ok(entries) = fs::read_dir("indicators") {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("py") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if stem != "__init__" {
+                            let content = fs::read_to_string(&path).unwrap_or_default();
+                            let requires_price = content.contains("REQUIRES_PRICE = True");
+                            indicators.push(IndicatorMeta {
+                                name: stem.to_string(),
+                                requires_price,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    indicators.sort_by(|a, b| a.name.cmp(&b.name));
+    indicators
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse arguments
     let args: Vec<String> = env::args().collect();
@@ -169,7 +251,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::new(start_ticker, tickers_db, picker);
     
     // Initial fetch
-    if let Ok(stats) = fetch_stock_data(&app.ticker, 100, 40) {
+    if let Ok(stats) = fetch_stock_data(
+        &app.ticker, 
+        100, 
+        40, 
+        &app.enabled_indicators,
+        app.use_24h_time,
+        app.price_view
+    ) {
         app.stats = stats;
         if let Some(ref data) = app.stats.image_data {
             if let Some(img) = decode_image(data) {
@@ -213,6 +302,10 @@ fn run_app(
                                 app.input.clear();
                                 app.character_index = 0;
                                 app.update_filtered_tickers();
+                            }
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.input_mode = InputMode::SettingsMain;
+                                app.settings_main_state.select(Some(0));
                             }
                             _ => {}
                         },
@@ -270,6 +363,101 @@ fn run_app(
                                 app.list_state.select(Some(i));
                             }
                             _ => {}
+                        },
+                        InputMode::SettingsMain => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app.input_mode = InputMode::Normal;
+                                app.last_fetch_time = Instant::now().checked_sub(tick_rate * 2).unwrap_or(Instant::now());
+                            }
+                            KeyCode::Down => {
+                                let i = match app.settings_main_state.selected() {
+                                    Some(i) => {
+                                        if i >= app.settings_items.len().saturating_sub(1) { 0 } else { i + 1 }
+                                    }
+                                    None => 0,
+                                };
+                                app.settings_main_state.select(Some(i));
+                            }
+                            KeyCode::Up => {
+                                let i = match app.settings_main_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 { app.settings_items.len().saturating_sub(1) } else { i - 1 }
+                                    }
+                                    None => 0,
+                                };
+                                app.settings_main_state.select(Some(i));
+                            }
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                if let Some(i) = app.settings_main_state.selected() {
+                                    match i {
+                                        0 => { // Indicators
+                                            app.input_mode = InputMode::SettingsIndicators;
+                                            app.settings_ind_state.select(Some(0));
+                                        }
+                                        1 => { // View Mode
+                                            app.price_view = !app.price_view;
+                                        }
+                                        2 => { // Time Format
+                                            app.use_24h_time = !app.use_24h_time;
+                                        }
+                                        3 => { // Header
+                                            app.show_header = !app.show_header;
+                                        }
+                                        4 => { // Save & Exit
+                                            app.input_mode = InputMode::Normal;
+                                            app.last_fetch_time = Instant::now().checked_sub(tick_rate * 2).unwrap_or(Instant::now());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
+                        InputMode::SettingsIndicators => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+                                app.input_mode = InputMode::SettingsMain;
+                            }
+                            KeyCode::Down => {
+                                let len = app.available_indicators.len() + 1; // +1 for Back
+                                let i = match app.settings_ind_state.selected() {
+                                    Some(i) => {
+                                        if i >= len.saturating_sub(1) { 0 } else { i + 1 }
+                                    }
+                                    None => 0,
+                                };
+                                app.settings_ind_state.select(Some(i));
+                            }
+                            KeyCode::Up => {
+                                let len = app.available_indicators.len() + 1;
+                                let i = match app.settings_ind_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 { len.saturating_sub(1) } else { i - 1 }
+                                    }
+                                    None => 0,
+                                };
+                                app.settings_ind_state.select(Some(i));
+                            }
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                if let Some(i) = app.settings_ind_state.selected() {
+                                    if i < app.available_indicators.len() {
+                                        if let Some(ind_meta) = app.available_indicators.get(i) {
+                                            let name = ind_meta.name.clone();
+                                            if app.enabled_indicators.contains(&name) {
+                                                app.enabled_indicators.remove(&name);
+                                            } else {
+                                                app.enabled_indicators.insert(name);
+                                                if ind_meta.requires_price {
+                                                    app.price_view = true;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Back button
+                                        app.input_mode = InputMode::SettingsMain;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -285,7 +473,7 @@ fn run_app(
                 time_since_fetch >= tick_rate || 
                 (size_changed && time_since_resize >= resize_debounce)
             },
-            InputMode::Editing => false,
+            InputMode::Editing | InputMode::SettingsMain | InputMode::SettingsIndicators => false,
         };
 
         if should_fetch {
@@ -294,7 +482,14 @@ fn run_app(
             let w_arg = if w > 0 { w } else { 100 };
             let h_arg = if h > 0 { h } else { 40 };
 
-            if let Ok(new_stats) = fetch_stock_data(&app.ticker, w_arg, h_arg) {
+            if let Ok(new_stats) = fetch_stock_data(
+                &app.ticker, 
+                w_arg, 
+                h_arg, 
+                &app.enabled_indicators,
+                app.use_24h_time,
+                app.price_view
+            ) {
                 app.stats = new_stats;
                 if let Some(ref data) = app.stats.image_data {
                     if let Some(img) = decode_image(data) {
@@ -331,9 +526,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
+    let header_height = if app.show_header { 4 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
         .split(f.area());
 
     // Find ticker info
@@ -345,48 +541,53 @@ fn ui(f: &mut Frame, app: &mut App) {
     };
 
     // Header Stats
-    let header_block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("Stock Stats: {} | {} ({})", app.stats.symbol, name, kind));
+    if app.show_header {
+        let header_block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Stock Stats: {} | {} ({})", app.stats.symbol, name, kind));
 
-    let stats_text = if let Some(err) = &app.stats.error {
-        vec![Line::from(Span::styled(
-            format!("Error: {}", err),
-            Style::default().fg(Color::Red),
-        ))]
-    } else {
-        let color = if app.stats.change >= 0.0 {
-            Color::Green
+        let stats_text = if let Some(err) = &app.stats.error {
+            vec![Line::from(Span::styled(
+                format!("Error: {}", err),
+                Style::default().fg(Color::Red),
+            ))]
         } else {
-            Color::Red
+            let color = if app.stats.change >= 0.0 {
+                Color::Green
+            } else {
+                Color::Red
+            };
+            
+            vec![
+                Line::from(vec![
+                    Span::raw("Price: "),
+                    Span::styled(format!("${:.2}", app.stats.price), Style::default().bold()),
+                    Span::raw(" | Change: "),
+                    Span::styled(
+                        format!("{:.2} ({:.2}%)", app.stats.change, app.stats.pct_change),
+                        Style::default().fg(color).bold(),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::raw("O: "),
+                    Span::raw(format!("{:.2}", app.stats.open)),
+                    Span::raw(" | H: "),
+                    Span::raw(format!("{:.2}", app.stats.high)),
+                    Span::raw(" | L: "),
+                    Span::raw(format!("{:.2}", app.stats.low)),
+                    Span::raw(" | Vol: "),
+                    Span::raw(format!("{}", app.stats.volume)),
+                ]),
+            ]
         };
-        
-        vec![
-            Line::from(vec![
-                Span::raw("Price: "),
-                Span::styled(format!("${:.2}", app.stats.price), Style::default().bold()),
-                Span::raw(" | Change: "),
-                Span::styled(
-                    format!("{:.2} ({:.2}%)", app.stats.change, app.stats.pct_change),
-                    Style::default().fg(color).bold(),
-                ),
-            ]),
-            Line::from(format!(
-                "O: {:.2} | H: {:.2} | L: {:.2} | Vol: {}",
-                app.stats.open, app.stats.high, app.stats.low, app.stats.volume
-            )),
-            Line::from(vec![
-                Span::raw("Type: "),
-                Span::styled(kind, Style::default().fg(Color::Cyan)),
-            ]),
-        ]
-    };
 
-    let paragraph = Paragraph::new(stats_text).block(header_block);
-    f.render_widget(paragraph, chunks[0]);
+        let paragraph = Paragraph::new(stats_text).block(header_block);
+        f.render_widget(paragraph, chunks[0]);
+    }
 
     // Image Area
-    let image_block = Block::default().borders(Borders::ALL).title("Intraday % Change (1m)");
+    let chart_title = if app.price_view { "Intraday Price (1m)" } else { "Intraday % Change (1m)" };
+    let image_block = Block::default().borders(Borders::ALL).title(chart_title);
     let inner_image_area = image_block.inner(chunks[1]);
     f.render_widget(image_block, chunks[1]);
     
@@ -443,5 +644,81 @@ fn ui(f: &mut Frame, app: &mut App) {
         f.render_stateful_widget(list, popup_layout[1], &mut app.list_state);
         
         // Ensure cursor is visible in input (optional, can be tricky with layout)
+    }
+
+    if app.input_mode == InputMode::SettingsMain {
+        let popup_area = centered_rect(50, 60, f.area());
+        f.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default().borders(Borders::ALL).title("Settings");
+        f.render_widget(popup_block, popup_area);
+
+        let inner = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1)])
+            .margin(1)
+            .split(popup_area)[0];
+
+        let items: Vec<ListItem> = app.settings_items
+            .iter()
+            .enumerate()
+            .map(|(i, &label)| {
+                // Dynamic labels
+                let text = match i {
+                    1 => format!("View: {}", if app.price_view { "Price" } else { "% Change" }),
+                    2 => format!("Time: {}", if app.use_24h_time { "24h" } else { "12h" }),
+                    3 => format!("Header: {}", if app.show_header { "Show" } else { "Hide" }),
+                    _ => label.to_string(),
+                };
+                
+                ListItem::new(Line::from(text))
+            })
+            .collect();
+
+        let list = List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ");
+
+        f.render_stateful_widget(list, inner, &mut app.settings_main_state);
+    }
+    
+    if app.input_mode == InputMode::SettingsIndicators {
+        let popup_area = centered_rect(50, 60, f.area());
+        f.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default().borders(Borders::ALL).title("Indicators (* Requires Price)");
+        f.render_widget(popup_block, popup_area);
+
+        let inner = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1)])
+            .margin(1)
+            .split(popup_area)[0];
+
+        let mut items: Vec<ListItem> = app.available_indicators
+            .iter()
+            .map(|ind| {
+                let checkbox = if app.enabled_indicators.contains(&ind.name) {
+                    "[x] "
+                } else {
+                    "[ ] "
+                };
+                let suffix = if ind.requires_price { " (*)" } else { "" };
+                ListItem::new(Line::from(vec![
+                    Span::styled(checkbox, Style::default().fg(Color::Green)),
+                    Span::raw(&ind.name),
+                    Span::styled(suffix, Style::default().fg(Color::DarkGray).italic()),
+                ]))
+            })
+            .collect();
+            
+        // Add Back button
+        items.push(ListItem::new(Line::from(Span::styled("<< Back", Style::default().fg(Color::Yellow)))));
+
+        let list = List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ");
+
+        f.render_stateful_widget(list, inner, &mut app.settings_ind_state);
     }
 }
