@@ -93,6 +93,7 @@ struct App {
     show_header: bool,
     use_24h_time: bool,
     price_view: bool, // true = Price, false = % Change
+    chart_type: String,
 }
 
 impl App {
@@ -122,7 +123,8 @@ impl App {
                 "Indicators >",
                 "Timeframe >",
                 "Interval >",
-                "View: % Change", 
+                "View: % Change",
+                "Type: Line",
                 "Time: 12h",     
                 "Header: Show",  
                 "Save & Exit",
@@ -131,13 +133,14 @@ impl App {
                 "1d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
             ],
             available_intervals: vec![
-                "1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"
+                "1m", "2m", "5m", "15m", "1h", "1d", "1wk", "1mo", "3mo"
             ],
             timeframe: "1d".to_string(),
             interval: "1m".to_string(),
             show_header: true,
             use_24h_time: false,
             price_view: false,
+            chart_type: "line".to_string(),
         }
     }
 
@@ -167,7 +170,8 @@ fn fetch_stock_data(
     use_24h: bool, 
     price_view: bool,
     period: &str,
-    interval: &str
+    interval: &str,
+    chart_type: &str
 ) -> Result<StockStats, Box<dyn Error>> {
     let indicators_str = if indicators.is_empty() {
         "None".to_string()
@@ -192,6 +196,7 @@ fn fetch_stock_data(
         .arg(chart_mode)
         .arg(period)
         .arg(interval)
+        .arg(chart_type)
         .output()?;
 
     if !output.status.success() {
@@ -283,7 +288,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.use_24h_time,
         app.price_view,
         &app.timeframe,
-        &app.interval
+        &app.interval,
+        &app.chart_type
     ) {
         app.stats = stats;
         if let Some(ref data) = app.stats.image_data {
@@ -431,13 +437,21 @@ fn run_app(
                                         3 => { // View Mode
                                             app.price_view = !app.price_view;
                                         }
-                                        4 => { // Time Format
+                                        4 => { // Chart Type
+                                            if app.chart_type == "line" {
+                                                app.chart_type = "candle".to_string();
+                                                app.price_view = true; // Candle implies price view
+                                            } else {
+                                                app.chart_type = "line".to_string();
+                                            }
+                                        }
+                                        5 => { // Time Format
                                             app.use_24h_time = !app.use_24h_time;
                                         }
-                                        5 => { // Header
+                                        6 => { // Header
                                             app.show_header = !app.show_header;
                                         }
-                                        6 => { // Save & Exit
+                                        7 => { // Save & Exit
                                             app.input_mode = InputMode::Normal;
                                             app.last_fetch_time = Instant::now().checked_sub(tick_rate * 2).unwrap_or(Instant::now());
                                         }
@@ -591,7 +605,8 @@ fn run_app(
                 app.use_24h_time,
                 app.price_view,
                 &app.timeframe,
-                &app.interval
+                &app.interval,
+                &app.chart_type
             ) {
                 app.stats = new_stats;
                 if let Some(ref data) = app.stats.image_data {
@@ -772,8 +787,9 @@ fn ui(f: &mut Frame, app: &mut App) {
                     1 => format!("Timeframe: {}", app.timeframe),
                     2 => format!("Interval: {}", app.interval),
                     3 => format!("View: {}", if app.price_view { "Price" } else { "% Change" }),
-                    4 => format!("Time: {}", if app.use_24h_time { "24h" } else { "12h" }),
-                    5 => format!("Header: {}", if app.show_header { "Show" } else { "Hide" }),
+                    4 => format!("Type: {}", if app.chart_type == "candle" { "Candle" } else { "Line" }),
+                    5 => format!("Time: {}", if app.use_24h_time { "24h" } else { "12h" }),
+                    6 => format!("Header: {}", if app.show_header { "Show" } else { "Hide" }),
                     _ => label.to_string(),
                 };
                 

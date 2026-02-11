@@ -63,7 +63,7 @@ def get_period_timedelta(period):
     if period == "10y": return timedelta(days=365*10)
     return None
 
-def fetch_and_plot(ticker_symbol, width=None, height=None, active_indicators=None, time_format="24h", chart_mode="default", period="1d", interval="1m"):
+def fetch_and_plot(ticker_symbol, width=None, height=None, active_indicators=None, time_format="24h", chart_mode="default", period="1d", interval="1m", graph_type="line"):
     if active_indicators is None:
         active_indicators = []
 
@@ -182,7 +182,7 @@ def fetch_and_plot(ticker_symbol, width=None, height=None, active_indicators=Non
         main_ax = axes[0]
 
         plot_price = False
-        if chart_mode == "price":
+        if chart_mode == "price" or graph_type == "candle":
             plot_price = True
         elif chart_mode == "percent":
             plot_price = False
@@ -205,7 +205,29 @@ def fetch_and_plot(ticker_symbol, width=None, height=None, active_indicators=Non
             else:
                 chart_baseline = prev_close
 
-        if plot_price:
+        if graph_type == "candle":
+            # Calculate dynamic width
+            if len(plot_data) > 1:
+                width = (plot_data.index[1] - plot_data.index[0]).total_seconds() / 86400.0 * 0.8
+            else:
+                width = 0.0005
+
+            up = plot_data[plot_data.Close >= plot_data.Open]
+            down = plot_data[plot_data.Close < plot_data.Open]
+
+            # Up candles (Green)
+            main_ax.bar(up.index, up.Close - up.Open, bottom=up.Open, color='#98c379', width=width)
+            main_ax.vlines(up.index, up.Low, up.High, color='#98c379', linewidth=1)
+
+            # Down candles (Red)
+            # height is negative if Close < Open, which is fine, or we can normalize
+            main_ax.bar(down.index, down.Close - down.Open, bottom=down.Open, color='#e06c75', width=width)
+            main_ax.vlines(down.index, down.Low, down.High, color='#e06c75', linewidth=1)
+            
+            if period == "1d":
+                main_ax.axhline(prev_close, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5, label='Prev Close')
+
+        elif plot_price:
             main_ax.plot(plot_data.index, plot_data['Close'], color='#4674d7', linewidth=2.0, label='Price')
             if period == "1d":
                 main_ax.axhline(prev_close, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5, label='Prev Close')
@@ -366,5 +388,6 @@ if __name__ == "__main__":
     
     period = sys.argv[7] if len(sys.argv) > 7 else "1d"
     interval = sys.argv[8] if len(sys.argv) > 8 else "1m"
+    graph_type = sys.argv[9] if len(sys.argv) > 9 else "line"
 
-    fetch_and_plot(symbol, w, h, indicators, time_format, chart_mode, period, interval)
+    fetch_and_plot(symbol, w, h, indicators, time_format, chart_mode, period, interval, graph_type)
