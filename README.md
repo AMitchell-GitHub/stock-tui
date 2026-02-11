@@ -4,6 +4,9 @@ The definitive terminal UI for viewing stocks, markets, commodities, ETFs, and m
 
 Complete with modular indicators, high resolution charts, multiple time frames and intervals, and chart types!
 
+![ui](images/stock-tui-main.png)
+![ui](images/stock-tui-candle.png)
+
 ## Prerequisites
 
 - **Rust**: Ensure you have Rust and Cargo installed.
