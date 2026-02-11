@@ -116,7 +116,7 @@ def fetch_and_plot(ticker_symbol, width=None, height=None, active_indicators=Non
         main_ax.set_xlim(start_time, end_time)
 
         # Style Main Axis
-        main_ax.tick_params(axis='both', colors='#ABB2BF', labelsize=14, width=0, length=0)
+        main_ax.tick_params(axis='both', colors='#ABB2BF', labelsize=16, width=0, length=0)
         main_ax.grid(True, color='#43454c', linewidth=0.5)
         for spine in main_ax.spines.values():
             spine.set_visible(False)
