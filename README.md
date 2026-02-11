@@ -1,6 +1,8 @@
 # Stock TUI
 
-A terminal-based interface for viewing live stock data and intraday charts.
+The definitive terminal UI for viewing stocks, markets, commodities, ETFs, and more!
+
+Complete with modular indicators, high resolution charts, multiple time frames and intervals, and chart types!
 
 ## Prerequisites
 
@@ -10,6 +12,7 @@ A terminal-based interface for viewing live stock data and intraday charts.
   ```bash
   pip3 install yfinance matplotlib pandas
   ```
+- **A compatible terminal**: Your terminal must work with ratatui_image, so it is recommended that it support the high-resolution kitty image protocol. Try Wezterm, Kitty, or Ghostty.
 
 ## Build and Run
 
@@ -88,3 +91,5 @@ stock-tui [TICKER]
 - **[TICKER]**: Optional. The stock symbol to query (e.g., TSLA, AMD, SPY). Defaults to "AAPL".
 - **Controls**:
     - `q` or `Esc`: Quit the application.
+    - `Ctrl + o`: Open a ticker
+    - `Ctrl + s`: Settings menu
