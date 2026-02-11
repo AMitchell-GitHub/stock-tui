@@ -205,36 +205,36 @@ def fetch_and_plot(ticker_symbol, width=None, height=None, active_indicators=Non
             else:
                 chart_baseline = prev_close
 
-        if graph_type == "candle":
-            # Calculate dynamic width
-            if len(plot_data) > 1:
-                width = (plot_data.index[1] - plot_data.index[0]).total_seconds() / 86400.0 * 0.8
-            else:
-                width = 0.0005
+        # Calculate dynamic width for candles and volume
+        if len(plot_data) > 1:
+            width = (plot_data.index[1] - plot_data.index[0]).total_seconds() / 86400.0 * 0.8
+        else:
+            width = 0.0005
 
+        if graph_type == "candle":
             up = plot_data[plot_data.Close >= plot_data.Open]
             down = plot_data[plot_data.Close < plot_data.Open]
 
             # Up candles (Green)
-            main_ax.bar(up.index, up.Close - up.Open, bottom=up.Open, color='#98c379', width=width)
-            main_ax.vlines(up.index, up.Low, up.High, color='#98c379', linewidth=1)
+            main_ax.bar(up.index, up.Close - up.Open, bottom=up.Open, color='#98c379', width=width, zorder=2)
+            main_ax.vlines(up.index, up.Low, up.High, color='#98c379', linewidth=1, zorder=2)
 
             # Down candles (Red)
             # height is negative if Close < Open, which is fine, or we can normalize
-            main_ax.bar(down.index, down.Close - down.Open, bottom=down.Open, color='#e06c75', width=width)
-            main_ax.vlines(down.index, down.Low, down.High, color='#e06c75', linewidth=1)
+            main_ax.bar(down.index, down.Close - down.Open, bottom=down.Open, color='#e06c75', width=width, zorder=2)
+            main_ax.vlines(down.index, down.Low, down.High, color='#e06c75', linewidth=1, zorder=2)
             
             if period == "1d":
-                main_ax.axhline(prev_close, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5, label='Prev Close')
+                main_ax.axhline(prev_close, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5, label='Prev Close', zorder=2)
 
         elif plot_price:
-            main_ax.plot(plot_data.index, plot_data['Close'], color='#4674d7', linewidth=2.0, label='Price')
+            main_ax.plot(plot_data.index, plot_data['Close'], color='#4674d7', linewidth=2.0, label='Price', zorder=2)
             if period == "1d":
-                main_ax.axhline(prev_close, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5, label='Prev Close')
+                main_ax.axhline(prev_close, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5, label='Prev Close', zorder=2)
         else:
             pct_series = ((plot_data['Close'] - chart_baseline) / chart_baseline) * 100
-            main_ax.plot(plot_data.index, pct_series, color='#4674d7', linewidth=2.5)
-            main_ax.axhline(0, color='#ABB2BF', linestyle='--', linewidth=2.0)
+            main_ax.plot(plot_data.index, pct_series, color='#4674d7', linewidth=2.5, zorder=2)
+            main_ax.axhline(0, color='#ABB2BF', linestyle='--', linewidth=2.0, zorder=2)
             main_ax.yaxis.set_major_formatter(mtick.PercentFormatter(decimals=1))
 
         # Date Formatting and Limits
