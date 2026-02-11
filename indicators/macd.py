@@ -19,7 +19,18 @@ def run(ax, df):
     
     # Histogram colors
     colors = ['#98c379' if v >= 0 else '#e06c75' for v in histogram]
-    ax.bar(df.index, histogram, color=colors, alpha=0.5, width=0.0005) # width depends on time scale
+    
+    # Calculate dynamic width
+    if len(df) > 1:
+        # Calculate min diff to be safe against gaps
+        # diffs = df.index.to_series().diff().dt.total_seconds().dropna()
+        # width_days = diffs.min() / 86400.0 * 0.8
+        # Simple approach:
+        width = (df.index[1] - df.index[0]).total_seconds() / 86400.0 * 0.8
+    else:
+        width = 0.0005 # Fallback
+
+    ax.bar(df.index, histogram, color=colors, alpha=0.5, width=width)
     
     ax.axhline(0, color='#ABB2BF', linestyle='--', linewidth=1.0, alpha=0.5)
     ax.legend(loc='upper left', fontsize='small', frameon=False, labelcolor='#ABB2BF')

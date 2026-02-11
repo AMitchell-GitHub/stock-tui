@@ -57,6 +57,8 @@ enum InputMode {
     Editing,
     SettingsMain,
     SettingsIndicators,
+    SettingsTimeframe,
+    SettingsInterval,
 }
 
 struct App {
@@ -80,7 +82,13 @@ struct App {
     // Settings State
     settings_main_state: ListState,
     settings_ind_state: ListState,
+    settings_tf_state: ListState,
+    settings_int_state: ListState,
     settings_items: Vec<&'static str>,
+    available_timeframes: Vec<&'static str>,
+    available_intervals: Vec<&'static str>,
+    timeframe: String,
+    interval: String,
     // Configuration
     show_header: bool,
     use_24h_time: bool,
@@ -108,15 +116,27 @@ impl App {
             enabled_indicators: HashSet::new(),
             settings_main_state: ListState::default(),
             settings_ind_state: ListState::default(),
+            settings_tf_state: ListState::default(),
+            settings_int_state: ListState::default(),
             settings_items: vec![
                 "Indicators >",
+                "Timeframe >",
+                "Interval >",
                 "View: % Change", 
-                "Time: 24h",     
+                "Time: 12h",     
                 "Header: Show",  
                 "Save & Exit",
             ],
+            available_timeframes: vec![
+                "1d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
+            ],
+            available_intervals: vec![
+                "1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"
+            ],
+            timeframe: "1d".to_string(),
+            interval: "1m".to_string(),
             show_header: true,
-            use_24h_time: true,
+            use_24h_time: false,
             price_view: false,
         }
     }
@@ -145,7 +165,9 @@ fn fetch_stock_data(
     height: u16, 
     indicators: &HashSet<String>, 
     use_24h: bool, 
-    price_view: bool
+    price_view: bool,
+    period: &str,
+    interval: &str
 ) -> Result<StockStats, Box<dyn Error>> {
     let indicators_str = if indicators.is_empty() {
         "None".to_string()
@@ -168,6 +190,8 @@ fn fetch_stock_data(
         .arg(indicators_str)
         .arg(time_fmt)
         .arg(chart_mode)
+        .arg(period)
+        .arg(interval)
         .output()?;
 
     if !output.status.success() {
@@ -257,7 +281,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         40, 
         &app.enabled_indicators,
         app.use_24h_time,
-        app.price_view
+        app.price_view,
+        &app.timeframe,
+        &app.interval
     ) {
         app.stats = stats;
         if let Some(ref data) = app.stats.image_data {
@@ -394,16 +420,24 @@ fn run_app(
                                             app.input_mode = InputMode::SettingsIndicators;
                                             app.settings_ind_state.select(Some(0));
                                         }
-                                        1 => { // View Mode
+                                        1 => { // Timeframe
+                                            app.input_mode = InputMode::SettingsTimeframe;
+                                            app.settings_tf_state.select(Some(0));
+                                        }
+                                        2 => { // Interval
+                                            app.input_mode = InputMode::SettingsInterval;
+                                            app.settings_int_state.select(Some(0));
+                                        }
+                                        3 => { // View Mode
                                             app.price_view = !app.price_view;
                                         }
-                                        2 => { // Time Format
+                                        4 => { // Time Format
                                             app.use_24h_time = !app.use_24h_time;
                                         }
-                                        3 => { // Header
+                                        5 => { // Header
                                             app.show_header = !app.show_header;
                                         }
-                                        4 => { // Save & Exit
+                                        6 => { // Save & Exit
                                             app.input_mode = InputMode::Normal;
                                             app.last_fetch_time = Instant::now().checked_sub(tick_rate * 2).unwrap_or(Instant::now());
                                         }
@@ -458,6 +492,73 @@ fn run_app(
                                 }
                             }
                             _ => {}
+                        },
+                        InputMode::SettingsTimeframe => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+                                app.input_mode = InputMode::SettingsMain;
+                            }
+                            KeyCode::Down => {
+                                let len = app.available_timeframes.len();
+                                let i = match app.settings_tf_state.selected() {
+                                    Some(i) => if i >= len.saturating_sub(1) { 0 } else { i + 1 },
+                                    None => 0,
+                                };
+                                app.settings_tf_state.select(Some(i));
+                            }
+                            KeyCode::Up => {
+                                let len = app.available_timeframes.len();
+                                let i = match app.settings_tf_state.selected() {
+                                    Some(i) => if i == 0 { len.saturating_sub(1) } else { i - 1 },
+                                    None => 0,
+                                };
+                                app.settings_tf_state.select(Some(i));
+                            }
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                if let Some(i) = app.settings_tf_state.selected() {
+                                    if let Some(tf) = app.available_timeframes.get(i) {
+                                        app.timeframe = tf.to_string();
+                                        // Suggest interval
+                                        match app.timeframe.as_str() {
+                                            "1d" => app.interval = "1m".to_string(),
+                                            "2y" => app.interval = "1wk".to_string(),
+                                            "5y" | "10y" => app.interval = "1mo".to_string(),
+                                            _ => app.interval = "1d".to_string(),
+                                        }
+                                        app.input_mode = InputMode::SettingsMain;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
+                        InputMode::SettingsInterval => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+                                app.input_mode = InputMode::SettingsMain;
+                            }
+                            KeyCode::Down => {
+                                let len = app.available_intervals.len();
+                                let i = match app.settings_int_state.selected() {
+                                    Some(i) => if i >= len.saturating_sub(1) { 0 } else { i + 1 },
+                                    None => 0,
+                                };
+                                app.settings_int_state.select(Some(i));
+                            }
+                            KeyCode::Up => {
+                                let len = app.available_intervals.len();
+                                let i = match app.settings_int_state.selected() {
+                                    Some(i) => if i == 0 { len.saturating_sub(1) } else { i - 1 },
+                                    None => 0,
+                                };
+                                app.settings_int_state.select(Some(i));
+                            }
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                if let Some(i) = app.settings_int_state.selected() {
+                                    if let Some(intv) = app.available_intervals.get(i) {
+                                        app.interval = intv.to_string();
+                                        app.input_mode = InputMode::SettingsMain;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -473,7 +574,7 @@ fn run_app(
                 time_since_fetch >= tick_rate || 
                 (size_changed && time_since_resize >= resize_debounce)
             },
-            InputMode::Editing | InputMode::SettingsMain | InputMode::SettingsIndicators => false,
+            InputMode::Editing | InputMode::SettingsMain | InputMode::SettingsIndicators | InputMode::SettingsTimeframe | InputMode::SettingsInterval => false,
         };
 
         if should_fetch {
@@ -488,7 +589,9 @@ fn run_app(
                 h_arg, 
                 &app.enabled_indicators,
                 app.use_24h_time,
-                app.price_view
+                app.price_view,
+                &app.timeframe,
+                &app.interval
             ) {
                 app.stats = new_stats;
                 if let Some(ref data) = app.stats.image_data {
@@ -586,7 +689,8 @@ fn ui(f: &mut Frame, app: &mut App) {
     }
 
     // Image Area
-    let chart_title = if app.price_view { "Intraday Price (1m)" } else { "Intraday % Change (1m)" };
+    // Image Area
+    let chart_title = format!("{} {} ({})", app.timeframe, if app.price_view { "Price" } else { "% Change" }, app.interval);
     let image_block = Block::default().borders(Borders::ALL).title(chart_title);
     let inner_image_area = image_block.inner(chunks[1]);
     f.render_widget(image_block, chunks[1]);
@@ -665,9 +769,11 @@ fn ui(f: &mut Frame, app: &mut App) {
             .map(|(i, &label)| {
                 // Dynamic labels
                 let text = match i {
-                    1 => format!("View: {}", if app.price_view { "Price" } else { "% Change" }),
-                    2 => format!("Time: {}", if app.use_24h_time { "24h" } else { "12h" }),
-                    3 => format!("Header: {}", if app.show_header { "Show" } else { "Hide" }),
+                    1 => format!("Timeframe: {}", app.timeframe),
+                    2 => format!("Interval: {}", app.interval),
+                    3 => format!("View: {}", if app.price_view { "Price" } else { "% Change" }),
+                    4 => format!("Time: {}", if app.use_24h_time { "24h" } else { "12h" }),
+                    5 => format!("Header: {}", if app.show_header { "Show" } else { "Hide" }),
                     _ => label.to_string(),
                 };
                 
@@ -720,5 +826,67 @@ fn ui(f: &mut Frame, app: &mut App) {
             .highlight_symbol("> ");
 
         f.render_stateful_widget(list, inner, &mut app.settings_ind_state);
+    }
+    
+    if app.input_mode == InputMode::SettingsTimeframe {
+        let popup_area = centered_rect(50, 60, f.area());
+        f.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default().borders(Borders::ALL).title("Select Timeframe");
+        f.render_widget(popup_block, popup_area);
+
+        let inner = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1)])
+            .margin(1)
+            .split(popup_area)[0];
+
+        let items: Vec<ListItem> = app.available_timeframes
+            .iter()
+            .map(|tf| {
+                let prefix = if *tf == app.timeframe { "[*] " } else { "[ ] " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(Color::Green)),
+                    Span::raw(*tf),
+                ]))
+            })
+            .collect();
+            
+        let list = List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ");
+
+        f.render_stateful_widget(list, inner, &mut app.settings_tf_state);
+    }
+
+    if app.input_mode == InputMode::SettingsInterval {
+        let popup_area = centered_rect(50, 60, f.area());
+        f.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default().borders(Borders::ALL).title("Select Interval");
+        f.render_widget(popup_block, popup_area);
+
+        let inner = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1)])
+            .margin(1)
+            .split(popup_area)[0];
+
+        let items: Vec<ListItem> = app.available_intervals
+            .iter()
+            .map(|intv| {
+                let prefix = if *intv == app.interval { "[*] " } else { "[ ] " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(Color::Green)),
+                    Span::raw(*intv),
+                ]))
+            })
+            .collect();
+            
+        let list = List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ");
+
+        f.render_stateful_widget(list, inner, &mut app.settings_int_state);
     }
 }
